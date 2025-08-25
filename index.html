@@ -120,6 +120,8 @@
             let keys = null; // 鍵ペア
             let uploadedImageUrl = null; // アップロードされた画像のURL
             let relays = []; // nostr-loginから取得したリレーリスト
+            // ブラウザ拡張機能からリレーが取得できなかった場合のデフォルトリレー
+            const DEFAULT_RELAYS = ['wss://relay-jp.nostr.wirednet.jp', 'wss://nostr.mom', 'wss://yabu.me'];
 
             // nostr拡張機能が利用可能かチェック
             const hasNostrExtension = typeof window.nostr !== 'undefined';
@@ -158,20 +160,35 @@
             // 拡張機能からリレーを取得して接続する関数
             async function getAndConnectToRelays() {
                 try {
+                    // ブラウザ拡張機能からリレー情報を取得
                     const relayInfo = await window.nostr.getRelays();
                     relays = Object.keys(relayInfo);
-                    relayStatus.textContent = `接続リレー: ${relays.join(', ')}`;
+                    
+                    if (relays.length === 0) {
+                        // 拡張機能からリレーが取得できない場合は、デフォルトリレーを使用
+                        relays = DEFAULT_RELAYS;
+                        relayStatus.textContent = `リレー設定が見つからないため、デフォルトリレーに接続中: ${relays.join(', ')}`;
+                    } else {
+                        relayStatus.textContent = `接続リレー: ${relays.join(', ')}`;
+                    }
+
                     if (relays.length > 0) {
                         connectToRelay(relays[0]);
                     } else {
-                        updateStatus('nostr-loginからリレー情報が取得できませんでした。');
+                        updateStatus('接続できるリレーがありません。');
                     }
                 } catch (e) {
-                    console.error('Failed to get relays:', e);
-                    updateStatus('リレー情報の取得に失敗しました。');
+                    console.error('Failed to get relays from extension, using defaults:', e);
+                    // 拡張機能との通信に失敗した場合も、デフォルトリレーを使用
+                    relays = DEFAULT_RELAYS;
+                    relayStatus.textContent = `リレー情報の取得に失敗したため、デフォルトリレーに接続中: ${relays.join(', ')}`;
+                    if (relays.length > 0) {
+                        connectToRelay(relays[0]);
+                    } else {
+                        updateStatus('接続できるリレーがありません。');
+                    }
                 }
             }
-
 
             // メッセージを画面に追加する関数
             function addMessageToLog(pubkey, content) {
