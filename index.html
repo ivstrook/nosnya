@@ -358,7 +358,7 @@
                     try {
                         const formData = new FormData();
                         formData.append('file', imageFile);
-                        // image.nostr.build APIのエンドポイントに変更
+                        // image.nostr.build APIのエンドポイント
                         const uploadUrl = 'https://image.nostr.build/upload';
                         
                         const response = await fetch(uploadUrl, {
@@ -368,18 +368,20 @@
                         
                         const result = await response.json();
                         
-                        // image.nostr.buildは異なるレスポンス形式を返す
+                        // image.nostr.buildは異なるレスポンス形式
                         if (response.ok && result.data && result.data.url) {
                             uploadedImageUrl = result.data.url;
                             finalContent += `\n${uploadedImageUrl}`;
                             updateStatus('画像アップロードに成功しました！');
                         } else {
-                            updateStatus('画像アップロードに失敗しました。');
+                            // アップロード失敗時、エラーメッセージを具体的に表示
+                            const errorMsg = result.message || '不明なエラー';
+                            updateStatus(`画像アップロードに失敗しました: ${errorMsg}`);
                             console.error('Image upload failed:', result);
                             return;
                         }
                     } catch (e) {
-                        updateStatus('画像アップロード中にエラーが発生しました。');
+                        updateStatus('画像アップロード中にエラーが発生しました。ネットワーク接続を確認してください。');
                         console.error('Image upload error:', e);
                         return;
                     }
