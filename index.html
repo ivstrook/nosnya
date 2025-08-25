@@ -87,10 +87,8 @@
                 </button>
             </div>
             <div class="flex items-center space-x-2">
-                <input type="file" id="imageUpload" accept="image/*" class="hidden">
-                <button id="uploadButton" class="bg-gray-400 text-white font-bold py-3 px-6 rounded-lg hover:bg-gray-500 transition duration-200">
-                    画像
-                </button>
+                <!-- 画像を添付する代わりに、画像へのURLを直接入力できるようにします -->
+                <input type="text" id="imageInput" placeholder="画像URLを貼り付けてにゃ！" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200">
                 <input type="text" id="messageInput" placeholder="ここにメッセージを入力にゃ！" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 transition duration-200">
                 <button id="sendButton" class="bg-pink-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-pink-600 transition duration-200">
                     送信
@@ -108,8 +106,7 @@
             const messageInput = document.getElementById('messageInput');
             const sendButton = document.getElementById('sendButton');
             const statusMessage = document.getElementById('statusMessage');
-            const imageUpload = document.getElementById('imageUpload');
-            const uploadButton = document.getElementById('uploadButton');
+            const imageInput = document.getElementById('imageInput');
             const imagePreviewContainer = document.getElementById('imagePreviewContainer');
             const imagePreview = document.getElementById('imagePreview');
             const imageName = document.getElementById('imageName');
@@ -118,7 +115,6 @@
 
             let ws = null; // WebSocket接続
             let keys = null; // 鍵ペア
-            let uploadedImageUrl = null; // アップロードされた画像のURL
             let relays = []; // nostr-loginから取得したリレーリスト
             // ブラウザ拡張機能からリレーが取得できなかった場合のデフォルトリレー
             const DEFAULT_RELAYS = ['wss://relay-jp.nostr.wirednet.jp', 'wss://nostr.mom', 'wss://yabu.me'];
@@ -259,33 +255,23 @@
                 }
             });
 
-            // 「画像」ボタンのクリックでファイル選択ダイアログを開く
-            uploadButton.addEventListener('click', () => {
-                imageUpload.click();
-            });
-
-            // 画像が選択されたときの処理
-            imageUpload.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        imagePreview.src = e.target.result;
-                        imageName.textContent = file.name;
-                        imagePreviewContainer.classList.remove('hidden');
-                        imagePreviewContainer.classList.add('flex');
-                    };
-                    reader.readAsDataURL(file);
+            // imageInputにURLが入力されたときにプレビューを更新
+            imageInput.addEventListener('input', () => {
+                const url = imageInput.value.trim();
+                if (url) {
+                    imagePreview.src = url;
+                    imageName.textContent = url;
+                    imagePreviewContainer.classList.remove('hidden');
+                    imagePreviewContainer.classList.add('flex');
+                } else {
+                    clearImagePreview();
                 }
             });
 
             // プレビューをクリアするボタン
             clearImageButton.addEventListener('click', () => {
-                uploadedImageUrl = null;
-                imageUpload.value = '';
-                imagePreview.src = '';
-                imageName.textContent = '';
-                imagePreviewContainer.classList.add('hidden');
+                imageInput.value = '';
+                clearImagePreview();
             });
             
             // ------------------
@@ -344,47 +330,16 @@
                 }
 
                 const textContent = messageInput.value.trim();
-                const imageFile = imageUpload.files[0];
+                const imageUrl = imageInput.value.trim();
 
-                if (textContent === '' && !imageFile) {
-                    updateStatus('メッセージを入力するか、画像をアップロードしてください。');
+                if (textContent === '' && imageUrl === '') {
+                    updateStatus('メッセージを入力するか、画像URLを貼り付けてください。');
                     return;
                 }
 
                 let finalContent = textContent;
-
-                if (imageFile) {
-                    updateStatus('画像をアップロード中...');
-                    try {
-                        const formData = new FormData();
-                        formData.append('file', imageFile);
-                        // image.nostr.build APIのエンドポイント
-                        const uploadUrl = 'https://image.nostr.build/upload';
-                        
-                        const response = await fetch(uploadUrl, {
-                            method: 'POST',
-                            body: formData
-                        });
-                        
-                        const result = await response.json();
-                        
-                        // image.nostr.buildは異なるレスポンス形式
-                        if (response.ok && result.data && result.data.url) {
-                            uploadedImageUrl = result.data.url;
-                            finalContent += `\n${uploadedImageUrl}`;
-                            updateStatus('画像アップロードに成功しました！');
-                        } else {
-                            // アップロード失敗時、エラーメッセージを具体的に表示
-                            const errorMsg = result.message || '不明なエラー';
-                            updateStatus(`画像アップロードに失敗しました: ${errorMsg}`);
-                            console.error('Image upload failed:', result);
-                            return;
-                        }
-                    } catch (e) {
-                        updateStatus('画像アップロード中にエラーが発生しました。ネットワーク接続を確認してください。');
-                        console.error('Image upload error:', e);
-                        return;
-                    }
+                if (imageUrl !== '') {
+                    finalContent += `\n${imageUrl}`;
                 }
 
                 const event = {
@@ -399,6 +354,7 @@
                     ws.send(JSON.stringify(["EVENT", signedEvent]));
                     addMessageToLog(keys.publicKey, finalContent + 'にゃ');
                     messageInput.value = '';
+                    imageInput.value = '';
                     clearImagePreview();
                     updateStatus('メッセージが送信されました。');
                 } catch (e) {
@@ -409,8 +365,6 @@
 
             // 画像プレビューをクリアする関数
             function clearImagePreview() {
-                uploadedImageUrl = null;
-                imageUpload.value = '';
                 imagePreview.src = '';
                 imageName.textContent = '';
                 imagePreviewContainer.classList.add('hidden');
