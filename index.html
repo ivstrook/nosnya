@@ -45,7 +45,7 @@
         <h1 class="text-3xl md:text-4xl font-extrabold text-gray-800 text-center mb-6">
             にゃすとる <span class="text-gray-500 text-lg md:text-xl font-normal">(Nostr にゃ Client)</span>
         </h1>
-        <p>画像アップロード機能を作りました</p>
+
         <!-- 鍵管理セクション -->
         <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
             <h2 class="text-xl font-semibold mb-3 text-gray-700">キー管理</h2>
@@ -61,11 +61,8 @@
         <!-- リレー設定セクション -->
         <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
             <h2 class="text-xl font-semibold mb-3 text-gray-700">リレー設定</h2>
-            <label for="relayInput" class="block text-sm font-medium text-gray-600 mb-1">リレーURL</label>
-            <input type="text" id="relayInput" value="wss://nostr-jp.tokyo" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition duration-200">
-            <button id="connectButton" class="mt-2 w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200">
-                接続
-            </button>
+            <p class="text-sm text-gray-600 mb-2">ログインすると、nostr-loginに設定されたリレーに自動で接続します。</p>
+            <p id="relayStatus" class="text-sm font-medium text-gray-500">リレー設定を読み込み中...</p>
         </div>
 
         <!-- メッセージ表示セクション -->
@@ -107,8 +104,6 @@
             // DOM要素を取得
             const publicKeyDisplay = document.getElementById('publicKeyDisplay');
             const loginButton = document.getElementById('loginButton');
-            const relayInput = document.getElementById('relayInput');
-            const connectButton = document.getElementById('connectButton');
             const messageLog = document.getElementById('messageLog');
             const messageInput = document.getElementById('messageInput');
             const sendButton = document.getElementById('sendButton');
@@ -119,10 +114,12 @@
             const imagePreview = document.getElementById('imagePreview');
             const imageName = document.getElementById('imageName');
             const clearImageButton = document.getElementById('clearImageButton');
+            const relayStatus = document.getElementById('relayStatus');
 
             let ws = null; // WebSocket接続
             let keys = null; // 鍵ペア
             let uploadedImageUrl = null; // アップロードされた画像のURL
+            let relays = []; // nostr-loginから取得したリレーリスト
 
             // nostr拡張機能が利用可能かチェック
             const hasNostrExtension = typeof window.nostr !== 'undefined';
@@ -133,10 +130,48 @@
                 loginButton.style.display = 'none';
                 updateStatus('nostr拡張機能が見つかりません。');
             }
+            
+            // ページ読み込み時にログイン状態を確認
+            checkLoginState();
 
             // ------------------
             // ヘルパー関数
             // ------------------
+            
+            // ログイン状態をローカルストレージに保存する関数
+            function saveLoginState(publicKey) {
+                localStorage.setItem('nostr_pubkey', publicKey);
+            }
+
+            // ローカルストレージからログイン状態を確認する関数
+            function checkLoginState() {
+                const storedPubkey = localStorage.getItem('nostr_pubkey');
+                if (storedPubkey) {
+                    keys = { privateKey: null, publicKey: storedPubkey };
+                    publicKeyDisplay.textContent = storedPubkey;
+                    updateStatus('保存されたログイン情報で自動的にログインしました。');
+                    // 自動でリレーに接続
+                    getAndConnectToRelays();
+                }
+            }
+
+            // 拡張機能からリレーを取得して接続する関数
+            async function getAndConnectToRelays() {
+                try {
+                    const relayInfo = await window.nostr.getRelays();
+                    relays = Object.keys(relayInfo);
+                    relayStatus.textContent = `接続リレー: ${relays.join(', ')}`;
+                    if (relays.length > 0) {
+                        connectToRelay(relays[0]);
+                    } else {
+                        updateStatus('nostr-loginからリレー情報が取得できませんでした。');
+                    }
+                } catch (e) {
+                    console.error('Failed to get relays:', e);
+                    updateStatus('リレー情報の取得に失敗しました。');
+                }
+            }
+
 
             // メッセージを画面に追加する関数
             function addMessageToLog(pubkey, content) {
@@ -180,30 +215,18 @@
                 }
                 try {
                     const publicKey = await window.nostr.getPublicKey();
-                    keys = { privateKey: null, publicKey: publicKey }; // 拡張機能が秘密鍵を管理
+                    keys = { privateKey: null, publicKey: publicKey };
                     publicKeyDisplay.textContent = publicKey;
-                    updateStatus('ログインしました！リレーに接続してください。');
+                    saveLoginState(publicKey); // ログイン状態を保存
+                    updateStatus('ログインしました！リレーに接続中...');
+                    getAndConnectToRelays();
                 } catch (e) {
-                    // エラーをコンソールに出力
                     console.error('Login error:', e);
-                    // エラーメッセージに応じてユーザーにフィードバック
                     if (e.message.includes('Rejected by user')) {
                          updateStatus('ログインが拒否されました。ブラウザ拡張機能で許可してください。');
                     } else {
                          updateStatus('ログインに失敗しました。');
                     }
-                }
-            });
-
-            // 「接続」ボタンのクリックイベント
-            connectButton.addEventListener('click', () => {
-                const relayUrl = relayInput.value;
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    // 既に接続している場合は切断
-                    ws.close();
-                } else {
-                    // 新しい接続を開始
-                    connectToRelay(relayUrl);
                 }
             });
 
@@ -228,7 +251,6 @@
             imageUpload.addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) {
-                    // プレビュー表示
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         imagePreview.src = e.target.result;
@@ -259,14 +281,16 @@
                     updateStatus('有効な公開鍵がありません。nostr-loginでログインしてください。');
                     return;
                 }
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.close();
+                }
 
-                updateStatus('リレーに接続中...');
+                updateStatus(`リレー (${relayUrl}) に接続中...`);
                 ws = new WebSocket(relayUrl);
 
                 ws.onopen = () => {
-                    updateStatus('接続しました！メッセージを読み込み中...');
-                    connectButton.textContent = '切断';
-                    // 接続後、最新のメッセージを取得するためのREQメッセージを送信
+                    updateStatus(`接続しました！メッセージを読み込み中...`);
                     ws.send(JSON.stringify(["REQ", "my-subscription", { kinds: [1], limit: 50 }]));
                 };
 
@@ -282,13 +306,11 @@
 
                 ws.onclose = () => {
                     updateStatus('リレーから切断されました。');
-                    connectButton.textContent = '接続';
                 };
 
                 ws.onerror = (error) => {
                     console.error('WebSocket Error:', error);
                     updateStatus('接続エラーが発生しました。URLを確認してください。');
-                    connectButton.textContent = '接続';
                 };
             }
 
@@ -318,8 +340,7 @@
                     updateStatus('画像をアップロード中...');
                     try {
                         const formData = new FormData();
-                        formData.append('file', imageFile); // nostr.downloadは'file'というキーを使用
-                        // nostr.download APIのエンドポイント
+                        formData.append('file', imageFile);
                         const uploadUrl = 'https://nostr.download/api/v1/upload';
                         
                         const response = await fetch(uploadUrl, {
@@ -345,25 +366,19 @@
                     }
                 }
 
-                // Nostrイベントを作成
                 const event = {
-                    kind: 1, // kind 1はテキスト投稿
+                    kind: 1,
                     created_at: Math.floor(Date.now() / 1000),
                     tags: [],
                     content: finalContent + 'にゃ',
                 };
 
-                // 拡張機能を使ってイベントに署名
                 try {
                     const signedEvent = await window.nostr.signEvent(event);
-
-                    // RELAYにイベントを送信
                     ws.send(JSON.stringify(["EVENT", signedEvent]));
-
-                    // 送信したメッセージをログに追加
                     addMessageToLog(keys.publicKey, finalContent + 'にゃ');
-                    messageInput.value = ''; // 入力欄をクリア
-                    clearImagePreview(); // 画像プレビューをクリア
+                    messageInput.value = '';
+                    clearImagePreview();
                     updateStatus('メッセージが送信されました。');
                 } catch (e) {
                     updateStatus('メッセージの送信に失敗しました。');
