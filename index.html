@@ -341,7 +341,8 @@
                     try {
                         const formData = new FormData();
                         formData.append('file', imageFile);
-                        const uploadUrl = 'https://nostr.download/api/v1/upload';
+                        // image.nostr.build APIのエンドポイントに変更
+                        const uploadUrl = 'https://image.nostr.build/upload';
                         
                         const response = await fetch(uploadUrl, {
                             method: 'POST',
@@ -350,8 +351,9 @@
                         
                         const result = await response.json();
                         
-                        if (response.ok && result.url) {
-                            uploadedImageUrl = result.url;
+                        // image.nostr.buildは異なるレスポンス形式を返す
+                        if (response.ok && result.data && result.data.url) {
+                            uploadedImageUrl = result.data.url;
                             finalContent += `\n${uploadedImageUrl}`;
                             updateStatus('画像アップロードに成功しました！');
                         } else {
