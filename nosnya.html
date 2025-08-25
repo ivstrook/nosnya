@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>にゃすとる (Nostr にゃ Client)</title>
+    <!-- Tailwind CSSを読み込み、モダンなUIを構築します -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Nostrイベントの署名や鍵の生成に必要なnostr-toolsライブラリを読み込みます -->
+    <script src="https://cdn.jsdelivr.net/npm/nostr-tools/lib/nostr-tools.min.js"></script>
+    <!-- Nostr-loginを読み込み、ブラウザ拡張機能でログインできるようにします -->
+    <script src='https://www.unpkg.com/nostr-login@latest/dist/unpkg.js'></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* 背景色 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 800px;
+        }
+        /* メッセージログのスクロールバーを非表示にする（見た目をすっきりさせるため） */
+        .message-log::-webkit-scrollbar {
+            display: none;
+        }
+        .message-log {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center p-4 min-h-screen">
+    <div class="container bg-white rounded-2xl shadow-xl p-6 md:p-10 border border-gray-200">
+        <h1 class="text-3xl md:text-4xl font-extrabold text-gray-800 text-center mb-6">
+            にゃすとる <span class="text-gray-500 text-lg md:text-xl font-normal">(Nostr にゃ Client)</span>
+        </h1>
+
+        <!-- 鍵管理セクション -->
+        <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <h2 class="text-xl font-semibold mb-3 text-gray-700">キー管理</h2>
+            <div class="mb-4">
+                <p class="text-sm text-gray-600">このクライアントはブラウザ拡張機能（nostr-loginなど）を使用してログインします。</p>
+            </div>
+            <p class="text-sm text-gray-600">公開鍵: <code id="publicKeyDisplay" class="font-mono text-xs break-all bg-gray-200 px-1 py-0.5 rounded-md">ログインしていません...</code></p>
+            <button id="loginButton" class="mt-4 w-full sm:w-auto bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-200">
+                nostr-loginでログイン
+            </button>
+        </div>
+
+        <!-- リレー設定セクション -->
+        <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <h2 class="text-xl font-semibold mb-3 text-gray-700">リレー設定</h2>
+            <label for="relayInput" class="block text-sm font-medium text-gray-600 mb-1">リレーURL</label>
+            <input type="text" id="relayInput" value="wss://nostr-jp.tokyo" class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition duration-200">
+            <button id="connectButton" class="mt-2 w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200">
+                接続
+            </button>
+        </div>
+
+        <!-- メッセージ表示セクション -->
+        <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <h2 class="text-xl font-semibold mb-3 text-gray-700">タイムライン</h2>
+            <div id="messageLog" class="message-log h-96 overflow-y-scroll bg-white p-4 rounded-lg border border-gray-300 space-y-3">
+                <!-- メッセージはここに動的に追加されます -->
+            </div>
+            <div id="statusMessage" class="mt-3 text-center text-sm font-medium text-gray-500">
+                ログインしてリレーに接続してください。
+            </div>
+        </div>
+
+        <!-- メッセージ入力・送信セクション -->
+        <div class="flex items-center space-x-2">
+            <input type="text" id="messageInput" placeholder="ここにメッセージを入力にゃ！" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 transition duration-200">
+            <button id="sendButton" class="bg-pink-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-pink-600 transition duration-200">
+                送信
+            </button>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function() {
+            // DOM要素を取得
+            const publicKeyDisplay = document.getElementById('publicKeyDisplay');
+            const loginButton = document.getElementById('loginButton');
+            const relayInput = document.getElementById('relayInput');
+            const connectButton = document.getElementById('connectButton');
+            const messageLog = document.getElementById('messageLog');
+            const messageInput = document.getElementById('messageInput');
+            const sendButton = document.getElementById('sendButton');
+            const statusMessage = document.getElementById('statusMessage');
+
+            let ws = null; // WebSocket接続
+            let keys = null; // 鍵ペア
+
+            // nostr拡張機能が利用可能かチェック
+            const hasNostrExtension = typeof window.nostr !== 'undefined';
+            if (hasNostrExtension) {
+                loginButton.style.display = 'block';
+                updateStatus('ブラウザ拡張機能が検出されました。');
+            } else {
+                loginButton.style.display = 'none';
+                updateStatus('nostr拡張機能が見つかりません。');
+            }
+
+            // ------------------
+            // ヘルパー関数
+            // ------------------
+
+            // メッセージを画面に追加する関数
+            function addMessageToLog(pubkey, content) {
+                const messageElement = document.createElement('div');
+                messageElement.classList.add('p-3', 'rounded-lg', 'break-words');
+                
+                // 語尾が「にゃ」のメッセージには特別なスタイルを適用
+                const isNyanMessage = content.endsWith('にゃ');
+                if (isNyanMessage) {
+                    messageElement.classList.add('bg-purple-100', 'border', 'border-purple-300', 'shadow-sm');
+                } else {
+                    messageElement.classList.add('bg-white', 'border', 'border-gray-200', 'shadow-sm');
+                }
+
+                messageElement.innerHTML = `
+                    <div class="flex items-center mb-1">
+                        <code class="text-xs font-mono text-gray-600 mr-2">${pubkey.slice(0, 8)}...</code>
+                        <span class="text-xs text-gray-500">(${new Date().toLocaleTimeString()})</span>
+                    </div>
+                    <p class="text-base text-gray-800">${content}</p>
+                `;
+                messageLog.appendChild(messageElement);
+                messageLog.scrollTop = messageLog.scrollHeight;
+            }
+
+            // ------------------
+            // イベントリスナー
+            // ------------------
+
+            // nostr-loginボタンのクリックイベント
+            loginButton.addEventListener('click', async () => {
+                if (!hasNostrExtension) {
+                    updateStatus('nostr拡張機能が見つかりません。');
+                    return;
+                }
+                try {
+                    const publicKey = await window.nostr.getPublicKey();
+                    keys = { privateKey: null, publicKey: publicKey }; // 拡張機能が秘密鍵を管理
+                    publicKeyDisplay.textContent = publicKey;
+                    updateStatus('ログインしました！リレーに接続してください。');
+                } catch (e) {
+                    // エラーをコンソールに出力
+                    console.error('Login error:', e);
+                    // エラーメッセージに応じてユーザーにフィードバック
+                    if (e.message.includes('Rejected by user')) {
+                         updateStatus('ログインが拒否されました。ブラウザ拡張機能で許可してください。');
+                    } else {
+                         updateStatus('ログインに失敗しました。');
+                    }
+                }
+            });
+
+            // 「接続」ボタンのクリックイベント
+            connectButton.addEventListener('click', () => {
+                const relayUrl = relayInput.value;
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // 既に接続している場合は切断
+                    ws.close();
+                } else {
+                    // 新しい接続を開始
+                    connectToRelay(relayUrl);
+                }
+            });
+
+            // 「送信」ボタンのクリックイベント
+            sendButton.addEventListener('click', () => {
+                sendMessage();
+            });
+
+            // メッセージ入力フィールドでのEnterキーの押下
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            // ------------------
+            // メインロジック
+            // ------------------
+
+            // リレーに接続する関数
+            function connectToRelay(relayUrl) {
+                if (!keys || !keys.publicKey) {
+                    updateStatus('有効な公開鍵がありません。nostr-loginでログインしてください。');
+                    return;
+                }
+
+                updateStatus('リレーに接続中...');
+                ws = new WebSocket(relayUrl);
+
+                ws.onopen = () => {
+                    updateStatus('接続しました！メッセージを読み込み中...');
+                    connectButton.textContent = '切断';
+                    // 接続後、最新のメッセージを取得するためのREQメッセージを送信
+                    ws.send(JSON.stringify(["REQ", "my-subscription", { kinds: [1], limit: 50 }]));
+                };
+
+                ws.onmessage = (message) => {
+                    const [type, ...data] = JSON.parse(message.data);
+                    if (type === "EVENT") {
+                        const [subscriptionId, event] = data;
+                        if (subscriptionId === "my-subscription") {
+                            addMessageToLog(event.pubkey, event.content);
+                        }
+                    }
+                };
+
+                ws.onclose = () => {
+                    updateStatus('リレーから切断されました。');
+                    connectButton.textContent = '接続';
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket Error:', error);
+                    updateStatus('接続エラーが発生しました。URLを確認してください。');
+                    connectButton.textContent = '接続';
+                };
+            }
+
+            // メッセージを送信する関数
+            async function sendMessage() {
+                if (!hasNostrExtension || !keys || !keys.publicKey) {
+                    updateStatus('nostr拡張機能が見つからないか、ログインしていません。');
+                    return;
+                }
+
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    updateStatus('リレーに接続されていません。');
+                    return;
+                }
+
+                const content = messageInput.value.trim();
+                if (content === '') return;
+
+                const nyanContent = content + 'にゃ';
+
+                // 拡張機能を使ってイベントに署名
+                const signedEvent = await window.nostr.signEvent({
+                    kind: 1, // kind 1はテキスト投稿
+                    created_at: Math.floor(Date.now() / 1000),
+                    tags: [],
+                    content: nyanContent
+                });
+
+                // RELAYにイベントを送信
+                ws.send(JSON.stringify(["EVENT", signedEvent]));
+
+                // 送信したメッセージをログに追加
+                addMessageToLog(keys.publicKey, nyanContent);
+                messageInput.value = ''; // 入力欄をクリア
+            }
+
+            // ステータスメッセージを更新する関数
+            function updateStatus(message) {
+                statusMessage.textContent = message;
+            }
+        };
+    </script>
+</body>
+</html>
